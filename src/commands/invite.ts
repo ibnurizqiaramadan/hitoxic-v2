@@ -1,4 +1,9 @@
-import { Message, SlashCommandBuilder, ChatInputCommandInteraction, EmbedBuilder } from 'discord.js';
+import {
+  Message,
+  SlashCommandBuilder,
+  ChatInputCommandInteraction,
+  EmbedBuilder,
+} from 'discord.js';
 import { Command } from '../types';
 
 export const invite: Command = {
@@ -11,12 +16,14 @@ export const invite: Command = {
     try {
       const clientId = process.env['CLIENT_ID'];
       if (!clientId) {
-        await message.reply('❌ Bot invite link is not configured. Please contact the bot administrator.');
+        await message.reply(
+          '❌ Bot invite link is not configured. Please contact the bot administrator.'
+        );
         return;
       }
 
       const inviteLink = `https://discord.com/api/oauth2/authorize?client_id=${clientId}&permissions=2147483648&scope=bot%20applications.commands`;
-      
+
       const embed = new EmbedBuilder()
         .setColor('#00ff00')
         .setTitle('🤖 Bot Invite Link')
@@ -28,12 +35,14 @@ export const invite: Command = {
         })
         .addFields({
           name: '📋 Permissions',
-          value: '• Send Messages\n• Read Message History\n• Use Slash Commands\n• Embed Links\n• Attach Files',
+          value:
+            '• Send Messages\n• Read Message History\n• Use Slash Commands\n• Embed Links\n• Attach Files',
           inline: true,
         })
         .addFields({
           name: '⚙️ Features',
-          value: '• AI Chat Commands\n• Slash Commands\n• Message Commands\n• Help System',
+          value:
+            '• AI Chat Commands\n• Slash Commands\n• Message Commands\n• Help System',
           inline: true,
         })
         .setFooter({ text: 'Thanks for using our bot!' })
@@ -42,7 +51,9 @@ export const invite: Command = {
       await message.reply({ embeds: [embed] });
     } catch (error) {
       console.error('Error generating invite link:', error);
-      await message.reply('❌ Sorry, I encountered an error while generating the invite link. Please try again later.');
+      await message.reply(
+        '❌ Sorry, I encountered an error while generating the invite link. Please try again later.'
+      );
     }
   },
   slashCommand: new SlashCommandBuilder()
@@ -52,15 +63,16 @@ export const invite: Command = {
     try {
       const clientId = process.env['CLIENT_ID'];
       if (!clientId) {
-        await interaction.reply({ 
-          content: '❌ Bot invite link is not configured. Please contact the bot administrator.',
-          ephemeral: true 
+        await interaction.reply({
+          content:
+            '❌ Bot invite link is not configured. Please contact the bot administrator.',
+          ephemeral: true,
         });
         return;
       }
 
       const inviteLink = `https://discord.com/api/oauth2/authorize?client_id=${clientId}&permissions=2147483648&scope=bot%20applications.commands`;
-      
+
       const embed = new EmbedBuilder()
         .setColor('#00ff00')
         .setTitle('🤖 Bot Invite Link')
@@ -72,12 +84,14 @@ export const invite: Command = {
         })
         .addFields({
           name: '📋 Permissions',
-          value: '• Send Messages\n• Read Message History\n• Use Slash Commands\n• Embed Links\n• Attach Files',
+          value:
+            '• Send Messages\n• Read Message History\n• Use Slash Commands\n• Embed Links\n• Attach Files',
           inline: true,
         })
         .addFields({
           name: '⚙️ Features',
-          value: '• AI Chat Commands\n• Slash Commands\n• Message Commands\n• Help System',
+          value:
+            '• AI Chat Commands\n• Slash Commands\n• Message Commands\n• Help System',
           inline: true,
         })
         .setFooter({ text: 'Thanks for using our bot!' })
@@ -86,10 +100,11 @@ export const invite: Command = {
       await interaction.reply({ embeds: [embed], ephemeral: true });
     } catch (error) {
       console.error('Error generating invite link:', error);
-      await interaction.reply({ 
-        content: '❌ Sorry, I encountered an error while generating the invite link. Please try again later.',
-        ephemeral: true 
+      await interaction.reply({
+        content:
+          '❌ Sorry, I encountered an error while generating the invite link. Please try again later.',
+        ephemeral: true,
       });
     }
   },
-}; 
+};

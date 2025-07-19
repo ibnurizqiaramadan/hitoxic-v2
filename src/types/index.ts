@@ -1,4 +1,9 @@
-import { Client, Message, ChatInputCommandInteraction, SlashCommandBuilder } from 'discord.js';
+import {
+  Client,
+  Message,
+  ChatInputCommandInteraction,
+  SlashCommandBuilder,
+} from 'discord.js';
 
 export interface Command {
   name: string;
@@ -25,4 +30,4 @@ export interface BotConfig {
   prefix: string;
   status: string;
   activity: string;
-} 
+}

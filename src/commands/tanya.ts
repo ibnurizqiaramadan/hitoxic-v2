@@ -1,4 +1,8 @@
-import { Message, SlashCommandBuilder, ChatInputCommandInteraction } from 'discord.js';
+import {
+  Message,
+  SlashCommandBuilder,
+  ChatInputCommandInteraction,
+} from 'discord.js';
 import { Command } from '../types';
 import { OllamaService } from '../services/OllamaService';
 
@@ -35,7 +39,9 @@ export const tanya: Command = {
   cooldown: 10,
   execute: async (message: Message, args?: string[]) => {
     if (!args || args.length === 0) {
-      await message.reply('❌ Please provide a question to ask the AI assistant.');
+      await message.reply(
+        '❌ Please provide a question to ask the AI assistant.'
+      );
       return;
     }
     const question = args.join(' ');
@@ -43,16 +49,16 @@ export const tanya: Command = {
       if ('sendTyping' in message.channel) {
         await message.channel.sendTyping();
       }
-                  const ollamaService = new OllamaService();
+      const ollamaService = new OllamaService();
       const thinkingMessage = await message.reply('🤔 Thinking...');
       let fullResponse = '';
       let lastUpdateTime = Date.now();
       let currentResponseMessage: Message | null = null;
-      
+
       for await (const chunk of ollamaService.askStream(question)) {
         fullResponse += chunk;
         // Always update every chunk, or at least every 50ms
-        if ((Date.now() - lastUpdateTime) > 50) {
+        if (Date.now() - lastUpdateTime > 50) {
           // Check if response is getting too long
           if (fullResponse.length > 1900) {
             // Split into chunks and send as new messages
@@ -86,7 +92,7 @@ export const tanya: Command = {
           lastUpdateTime = Date.now();
         }
       }
-      
+
       // Final update - edit existing or create new
       if (fullResponse.trim()) {
         const finalChunks = splitMessage(fullResponse);
@@ -107,21 +113,27 @@ export const tanya: Command = {
       }
     } catch (error) {
       console.error('Error asking AI:', error);
-      await message.reply('❌ Sorry, I encountered an error while processing your question. Please try again later.');
+      await message.reply(
+        '❌ Sorry, I encountered an error while processing your question. Please try again later.'
+      );
     }
   },
   slashCommand: new SlashCommandBuilder()
     .setName('tanya')
     .setDescription('Ask a question to the AI assistant')
     .addStringOption(option =>
-      option.setName('question')
+      option
+        .setName('question')
         .setDescription('Your question for the AI')
         .setRequired(true)
     ) as SlashCommandBuilder,
   executeSlash: async (interaction: ChatInputCommandInteraction) => {
     const question = interaction.options.getString('question');
     if (!question) {
-      await interaction.reply({ content: '❌ Please provide a question to ask the AI assistant.', ephemeral: true });
+      await interaction.reply({
+        content: '❌ Please provide a question to ask the AI assistant.',
+        ephemeral: true,
+      });
       return;
     }
     try {
@@ -130,11 +142,11 @@ export const tanya: Command = {
       let fullResponse = '';
       let lastUpdateTime = Date.now();
       let hasReplied = false;
-      
+
       for await (const chunk of ollamaService.askStream(question)) {
         fullResponse += chunk;
         // Always update every chunk, or at least every 50ms
-        if ((Date.now() - lastUpdateTime) > 50) {
+        if (Date.now() - lastUpdateTime > 50) {
           // Check if response is getting too long
           if (fullResponse.length > 1900) {
             // Split into chunks and send as new messages
@@ -161,7 +173,7 @@ export const tanya: Command = {
           lastUpdateTime = Date.now();
         }
       }
-      
+
       // Final update - edit existing or create new
       if (fullResponse.trim()) {
         const finalChunks = splitMessage(fullResponse);
@@ -181,7 +193,9 @@ export const tanya: Command = {
       }
     } catch (error) {
       console.error('Error asking AI:', error);
-      await interaction.editReply('❌ Sorry, I encountered an error while processing your question. Please try again later.');
+      await interaction.editReply(
+        '❌ Sorry, I encountered an error while processing your question. Please try again later.'
+      );
     }
   },
-}; 
+};

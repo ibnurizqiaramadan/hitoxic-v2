@@ -1,17 +1,14 @@
-import { Client, Collection, Message } from 'discord.js';
+import { Collection, Message } from 'discord.js';
 import { Command } from '../types';
 import { Logger } from '../utils/Logger';
 
 export class CommandHandler {
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  // @ts-ignore
-  private _client: Client;
   private commands: Collection<string, Command>;
   private logger: Logger;
   private prefix: string;
+  private cooldowns: Collection<string, number> = new Collection();
 
-  constructor(client: Client) {
-    this._client = client;
+  constructor() {
     this.commands = new Collection();
     this.logger = new Logger();
     this.prefix = process.env['BOT_PREFIX'] || '!';
@@ -27,36 +24,52 @@ export class CommandHandler {
     this.logger.info(`Registered command: ${command.name}`);
   }
 
+  private checkCooldown(command: Command, userId: string): boolean {
+    if (!command.cooldown) return true;
+
+    const key = `${userId}-${command.name}`;
+    const now = Date.now();
+    const cooldownAmount = (command.cooldown || 3) * 1000;
+    const lastUsed = this.cooldowns.get(key);
+
+    if (lastUsed && now - lastUsed < cooldownAmount) {
+      return false;
+    }
+
+    this.cooldowns.set(key, now);
+    return true;
+  }
+
   async handleMessage(message: Message): Promise<void> {
+    // Early returns for performance
+    if (message.author.bot || !message.content) return;
 
-    this.logger.info(`Message received: "${message.content}"`);
+    this.logger.debug(`Message from ${message.author.tag}: ${message.content}`);
 
-    if (message.author.bot) {
-      this.logger.info('Message from bot, skipping');
-      return;
-    }
+    if (!message.content.startsWith(this.prefix)) return;
 
-    this.logger.info(`Checking if message starts with prefix "${this.prefix}"`);
-    if (!message.content.startsWith(this.prefix)) {
-      this.logger.info(`Message doesn't start with prefix "${this.prefix}"`);
-      return;
-    }
+    const args = message.content.slice(this.prefix.length).trim().split(/\s+/);
+    const commandName = args.shift()?.toLowerCase();
 
-    this.logger.info('Message starts with prefix, parsing command...');
-    const args = message.content.slice(this.prefix.length).trim().split(/ +/);
-    const commandName = args.shift()?.toLowerCase()?.trim();
-
-    this.logger.info(`Prefix: "${this.prefix}", Command name: "${commandName}", Available commands: [${Array.from(this.commands.keys()).join(', ')}]`);
-
-    if (!commandName) {
-      this.logger.info('No command name found');
-      return;
-    }
+    if (!commandName) return;
 
     const command = this.commands.get(commandName);
-
     if (!command) {
-      this.logger.warn(`Command not found: ${commandName}`);
+      this.logger.debug(`Command not found: ${commandName}`);
+      return;
+    }
+
+    // Check cooldown
+    if (!this.checkCooldown(command, message.author.id)) {
+      const remaining = Math.ceil(
+        (command.cooldown || 3) -
+          (Date.now() -
+            (this.cooldowns.get(`${message.author.id}-${command.name}`) || 0)) /
+            1000
+      );
+      await message.reply(
+        `⏰ Please wait ${remaining} seconds before using this command again.`
+      );
       return;
     }
 
@@ -71,4 +84,4 @@ export class CommandHandler {
   getCommands(): Collection<string, Command> {
     return this.commands;
   }
-} 
+}

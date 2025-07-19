@@ -1,4 +1,5 @@
 import { Logger } from '../utils/Logger';
+import { PerformanceMonitor } from '../utils/PerformanceMonitor';
 
 interface OllamaRequest {
   model: string;
@@ -17,17 +18,66 @@ interface QueuedRequest {
   reject: (error: Error) => void;
 }
 
+interface CacheEntry {
+  response: string;
+  timestamp: number;
+}
+
 export class OllamaService {
   private baseUrl: string;
   private model: string;
   private logger: Logger;
   private requestQueue: QueuedRequest[] = [];
   private isProcessing = false;
+  private cache: Map<string, CacheEntry> = new Map();
+  private readonly CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+  private readonly MAX_CACHE_SIZE = 100;
+  private performanceMonitor: PerformanceMonitor;
 
   constructor() {
     this.baseUrl = process.env['OLLAMA_URL'] || 'http://localhost:11434';
     this.model = process.env['OLLAMA_MODEL'] || 'gemma3:4b-it-qat';
     this.logger = new Logger();
+    this.performanceMonitor = PerformanceMonitor.getInstance();
+  }
+
+  private getCacheKey(prompt: string): string {
+    return `${this.model}:${prompt.toLowerCase().trim()}`;
+  }
+
+  private getFromCache(prompt: string): string | null {
+    const key = this.getCacheKey(prompt);
+    const entry = this.cache.get(key);
+
+    if (entry && Date.now() - entry.timestamp < this.CACHE_TTL) {
+      this.logger.debug('Cache hit for prompt');
+      this.performanceMonitor.trackCacheHit();
+      return entry.response;
+    }
+
+    if (entry) {
+      this.cache.delete(key);
+    }
+
+    this.performanceMonitor.trackCacheMiss();
+    return null;
+  }
+
+  private setCache(prompt: string, response: string): void {
+    const key = this.getCacheKey(prompt);
+
+    // Clean up old entries if cache is full
+    if (this.cache.size >= this.MAX_CACHE_SIZE) {
+      const oldestKey = this.cache.keys().next().value;
+      if (oldestKey) {
+        this.cache.delete(oldestKey);
+      }
+    }
+
+    this.cache.set(key, {
+      response,
+      timestamp: Date.now(),
+    });
   }
 
   private async processQueue(): Promise<void> {
@@ -36,39 +86,44 @@ export class OllamaService {
     }
 
     this.isProcessing = true;
-    this.logger.info(`Processing queue with ${this.requestQueue.length} requests`);
+    this.logger.info(
+      `Processing queue with ${this.requestQueue.length} requests`
+    );
 
     while (this.requestQueue.length > 0) {
       const request = this.requestQueue.shift();
       if (!request) continue;
 
       try {
-        this.logger.info('Processing Ollama request...');
+        this.logger.debug('Processing Ollama request...');
         const generator = await this.makeRequest(request.prompt);
         request.resolve(generator);
-        
+
         // Add delay between requests to prevent overload
         if (this.requestQueue.length > 0) {
-          this.logger.info('Waiting 2 seconds before next request...');
+          this.logger.debug('Waiting 2 seconds before next request...');
           await new Promise(resolve => setTimeout(resolve, 2000));
         }
       } catch (error) {
         this.logger.error('Error processing Ollama request:', error);
         request.reject(error as Error);
-        
+
         // Add longer delay on error
         if (this.requestQueue.length > 0) {
-          this.logger.info('Waiting 5 seconds after error...');
+          this.logger.debug('Waiting 5 seconds after error...');
           await new Promise(resolve => setTimeout(resolve, 5000));
         }
       }
     }
 
     this.isProcessing = false;
-    this.logger.info('Queue processing completed');
+    this.logger.debug('Queue processing completed');
   }
 
-  private async makeRequest(prompt: string, retryCount = 0): Promise<AsyncGenerator<string>> {
+  private async makeRequest(
+    prompt: string,
+    retryCount = 0
+  ): Promise<AsyncGenerator<string>> {
     const maxRetries = 3;
     const timeout = 30000; // 30 seconds timeout
 
@@ -76,7 +131,7 @@ export class OllamaService {
       const requestBody: OllamaRequest = {
         model: this.model,
         prompt: `You are a helpful Discord bot assistant. Keep all responses under 2000 characters to fit Discord message limits. Be concise but helpful.\n\n${prompt}`,
-        stream: true
+        stream: true,
       };
 
       const controller = new AbortController();
@@ -94,7 +149,9 @@ export class OllamaService {
       clearTimeout(timeoutId);
 
       if (!response.ok) {
-        throw new Error(`Ollama API error: ${response.status} ${response.statusText}`);
+        throw new Error(
+          `Ollama API error: ${response.status} ${response.statusText}`
+        );
       }
 
       if (!response.body) {
@@ -109,10 +166,10 @@ export class OllamaService {
           while (true) {
             const { done, value } = await reader.read();
             if (done) break;
-            
+
             const chunk = decoder.decode(value);
             const lines = chunk.split('\n').filter(line => line.trim());
-            
+
             for (const line of lines) {
               try {
                 const data = JSON.parse(line) as OllamaResponse;
@@ -132,8 +189,12 @@ export class OllamaService {
       return streamResponse();
     } catch (error) {
       if (retryCount < maxRetries) {
-        this.logger.warn(`Ollama request failed, retrying... (${retryCount + 1}/${maxRetries})`);
-        await new Promise(resolve => setTimeout(resolve, 2000 * (retryCount + 1))); // Exponential backoff
+        this.logger.warn(
+          `Ollama request failed, retrying... (${retryCount + 1}/${maxRetries})`
+        );
+        await new Promise(resolve =>
+          setTimeout(resolve, 2000 * (retryCount + 1))
+        ); // Exponential backoff
         return this.makeRequest(prompt, retryCount + 1);
       }
       throw error;
@@ -141,19 +202,51 @@ export class OllamaService {
   }
 
   async *askStream(prompt: string): AsyncGenerator<string> {
-    const generator = await new Promise<AsyncGenerator<string>>((resolve, reject) => {
-      this.requestQueue.push({ prompt, resolve, reject });
-      this.processQueue();
-    });
-    
+    // Check cache first
+    const cachedResponse = this.getFromCache(prompt);
+    if (cachedResponse) {
+      yield cachedResponse;
+      return;
+    }
+
+    const generator = await new Promise<AsyncGenerator<string>>(
+      (resolve, reject) => {
+        this.requestQueue.push({ prompt, resolve, reject });
+        this.processQueue();
+      }
+    );
+
     yield* generator;
   }
 
   async ask(prompt: string): Promise<string> {
+    // Check cache first
+    const cachedResponse = this.getFromCache(prompt);
+    if (cachedResponse) {
+      return cachedResponse;
+    }
+
     let fullResponse = '';
     for await (const chunk of this.askStream(prompt)) {
       fullResponse += chunk;
     }
+
+    // Cache the response
+    this.setCache(prompt, fullResponse);
     return fullResponse;
   }
-} 
+
+  // Method to clear cache (useful for testing or memory management)
+  clearCache(): void {
+    this.cache.clear();
+    this.logger.debug('Cache cleared');
+  }
+
+  // Method to get cache statistics
+  getCacheStats(): { size: number; hitRate: number } {
+    return {
+      size: this.cache.size,
+      hitRate: 0, // Could be implemented with hit/miss counters
+    };
+  }
+}

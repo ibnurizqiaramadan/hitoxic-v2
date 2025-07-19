@@ -16,4 +16,4 @@ describe('Ping Command', () => {
   it('should have a cooldown', () => {
     expect(ping.cooldown).toBe(5);
   });
-}); 
+});

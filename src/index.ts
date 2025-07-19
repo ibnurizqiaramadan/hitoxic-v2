@@ -1,11 +1,15 @@
-import { Client, GatewayIntentBits, ActivityType, PresenceStatusData, REST, Routes } from 'discord.js';
+import { Client, GatewayIntentBits, ActivityType, REST, Routes } from 'discord.js';
 import { config } from 'dotenv';
 import { CommandHandler } from './handlers/CommandHandler';
 import { EventHandler } from './handlers/EventHandler';
 import { Logger } from './utils/Logger';
+import { Config } from './utils/Config';
 
 // Load environment variables
 config();
+
+// Initialize configuration
+const botConfig = Config.getInstance();
 
 const client = new Client({
   intents: [
@@ -19,7 +23,7 @@ const client = new Client({
 const logger = new Logger();
 
 // Initialize handlers
-const commandHandler = new CommandHandler(client);
+const commandHandler = new CommandHandler();
 const eventHandler = new EventHandler(client);
 
 // Register commands
@@ -29,15 +33,15 @@ commands.forEach(command => {
 });
 
 // Register events
-  import events from './events';
+import events from './events';
 events.forEach(event => {
   eventHandler.registerEvent(event);
 });
 
 // Function to register slash commands
-async function registerSlashCommands() {
+async function registerSlashCommands(): Promise<void> {
   try {
-    const rest = new REST({ version: '10' }).setToken(process.env['DISCORD_TOKEN']!);
+    const rest = new REST({ version: '10' }).setToken(botConfig.get('token'));
     
     // Get slash commands from commands
     const slashCommands = commands
@@ -53,7 +57,7 @@ async function registerSlashCommands() {
     
     // Register commands globally
     await rest.put(
-      Routes.applicationCommands(process.env['CLIENT_ID']!),
+      Routes.applicationCommands(botConfig.get('clientId')),
       { body: slashCommands },
     );
     
@@ -71,12 +75,12 @@ client.once('ready', async () => {
   await registerSlashCommands();
   
   // Set bot activity
-  client.user?.setActivity(process.env['BOT_ACTIVITY'] || '!help', {
+  client.user?.setActivity(botConfig.get('activity'), {
     type: ActivityType.Playing,
   });
   
   // Set bot status
-  client.user?.setStatus(process.env['BOT_STATUS'] as PresenceStatusData || 'online');
+  client.user?.setStatus(botConfig.get('status'));
 });
 
 // Handle messages
@@ -116,5 +120,18 @@ process.on('uncaughtException', (error) => {
   process.exit(1);
 });
 
+// Graceful shutdown
+process.on('SIGINT', () => {
+  logger.info('Received SIGINT, shutting down gracefully...');
+  client.destroy();
+  process.exit(0);
+});
+
+process.on('SIGTERM', () => {
+  logger.info('Received SIGTERM, shutting down gracefully...');
+  client.destroy();
+  process.exit(0);
+});
+
 // Login to Discord
-client.login(process.env['DISCORD_TOKEN']); 
+client.login(botConfig.get('token')); 

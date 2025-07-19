@@ -15,17 +15,21 @@ export class EventHandler {
 
   registerEvent(event: Event): void {
     this.events.set(event.name, event);
-    
+
     if (event.once) {
-      this.client.once(event.name, (...args) => event.execute(this.client, ...args));
+      this.client.once(event.name, (...args) =>
+        event.execute(this.client, ...args)
+      );
     } else {
-      this.client.on(event.name, (...args) => event.execute(this.client, ...args));
+      this.client.on(event.name, (...args) =>
+        event.execute(this.client, ...args)
+      );
     }
-    
+
     this.logger.info(`Registered event: ${event.name}`);
   }
 
   getEvents(): Collection<string, Event> {
     return this.events;
   }
-} 
+}
