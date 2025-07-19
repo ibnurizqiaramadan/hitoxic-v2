@@ -28,7 +28,7 @@ export const help: Command = {
       embed.addFields({
         name: 'Available Commands',
         value:
-          '`ping` - Ping the bot to check latency\n`help` - Show all available commands\n`tanya` - Ask a question to the AI assistant\n`invite` - Get the bot invite link\n`stats` - Show bot performance statistics',
+          '`ping` - Ping the bot to check latency\n`help` - Show all available commands\n`tanya` - Ask a question to the AI assistant\n`invite` - Get the bot invite link\n`stats` - Show bot performance statistics\n\n**🎵 Music Commands:**\n`play` - Play a song from YouTube\n`skip` - Skip the current song\n`stop` - Stop music and clear queue\n`pause` - Pause the current song\n`resume` - Resume the current song\n`queue` - Show the music queue\n`volume` - Set music volume\n`loop` - Toggle loop mode',
         inline: false,
       });
 
@@ -85,7 +85,7 @@ export const help: Command = {
       embed.addFields({
         name: 'Available Commands',
         value:
-          '`ping` - Ping the bot to check latency\n`help` - Show all available commands\n`tanya` - Ask a question to the AI assistant\n`invite` - Get the bot invite link\n`stats` - Show bot performance statistics',
+          '`ping` - Ping the bot to check latency\n`help` - Show all available commands\n`tanya` - Ask a question to the AI assistant\n`invite` - Get the bot invite link\n`stats` - Show bot performance statistics\n\n**🎵 Music Commands:**\n`play` - Play a song from YouTube\n`skip` - Skip the Skip the current song\n`stop` - Stop music and clear queue\n`pause` - Pause the current song\n`resume` - Resume the current song\n`queue` - Show the music queue\n`volume` - Set music volume\n`loop` - Toggle loop mode',
         inline: false,
       });
 
