@@ -28,7 +28,7 @@ export const help: Command = {
       embed.addFields({
         name: 'Available Commands',
         value:
-          '`ping` - Ping the bot to check latency\n`help` - Show all available commands\n`tanya` - Ask a question to the AI assistant\n`invite` - Get the bot invite link',
+          '`ping` - Ping the bot to check latency\n`help` - Show all available commands\n`tanya` - Ask a question to the AI assistant\n`invite` - Get the bot invite link\n`stats` - Show bot performance statistics',
         inline: false,
       });
 
@@ -85,7 +85,7 @@ export const help: Command = {
       embed.addFields({
         name: 'Available Commands',
         value:
-          '`ping` - Ping the bot to check latency\n`help` - Show all available commands\n`tanya` - Ask a question to the AI assistant\n`invite` - Get the bot invite link',
+          '`ping` - Ping the bot to check latency\n`help` - Show all available commands\n`tanya` - Ask a question to the AI assistant\n`invite` - Get the bot invite link\n`stats` - Show bot performance statistics',
         inline: false,
       });
 

@@ -1,17 +1,20 @@
 import { Collection, Message } from 'discord.js';
 import { Command } from '../types';
 import { Logger } from '../utils/Logger';
+import { PerformanceMonitor } from '../utils/PerformanceMonitor';
 
 export class CommandHandler {
   private commands: Collection<string, Command>;
   private logger: Logger;
   private prefix: string;
   private cooldowns: Collection<string, number> = new Collection();
+  private performanceMonitor: PerformanceMonitor;
 
   constructor() {
     this.commands = new Collection();
     this.logger = new Logger();
     this.prefix = process.env['BOT_PREFIX'] || '!';
+    this.performanceMonitor = PerformanceMonitor.getInstance();
   }
 
   registerCommand(command: Command): void {
@@ -74,9 +77,15 @@ export class CommandHandler {
     }
 
     try {
+      const startTime = Date.now();
       await command.execute(message, args);
+      const responseTime = Date.now() - startTime;
+      
+      this.performanceMonitor.trackCommandExecution();
+      this.performanceMonitor.trackResponseTime(responseTime);
     } catch (error) {
       this.logger.error(`Error executing command ${commandName}:`, error);
+      this.performanceMonitor.trackError();
       await message.reply('There was an error executing that command!');
     }
   }
