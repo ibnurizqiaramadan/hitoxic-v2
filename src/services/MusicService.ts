@@ -46,6 +46,7 @@ export class MusicService {
   private static instance: MusicService;
   private queues: Map<string, MusicQueue> = new Map();
   private logger: Logger;
+  private emptyChannelTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
 
   private constructor() {
     this.logger = new Logger();
@@ -155,7 +156,10 @@ export class MusicService {
       this.logger.info('Song info:', { 
         title: songInfo.title, 
         url: songInfo.url, 
-        id: songInfo.id 
+        id: songInfo.id,
+        duration: songInfo.duration,
+        durationInSec: songInfo.durationInSec,
+        durationRaw: songInfo.durationRaw
       });
 
       if (!songInfo.url) {
@@ -163,10 +167,28 @@ export class MusicService {
         return { success: false, message: '❌ Could not get song URL!' };
       }
 
+      // Try different duration properties from play-dl
+      let duration = 0;
+      if (songInfo.durationInSec) {
+        duration = songInfo.durationInSec;
+      } else if (songInfo.durationRaw) {
+        // Parse duration from format like "4:23" to seconds
+        const timeMatch = songInfo.durationRaw.match(/(\d+):(\d+)/);
+        if (timeMatch) {
+          const minutes = parseInt(timeMatch[1]);
+          const seconds = parseInt(timeMatch[2]);
+          duration = minutes * 60 + seconds;
+        }
+      } else if (songInfo.duration) {
+        duration = songInfo.duration;
+      }
+
+      this.logger.info(`Extracted duration: ${duration} seconds`);
+
       const song: Song = {
         title: songInfo.title || 'Unknown Title',
         url: songInfo.url,
-        duration: songInfo.duration || 0,
+        duration: duration,
         thumbnail: songInfo.thumbnails?.[0]?.url,
         requestedBy: member.user.username,
         id: songInfo.id || Date.now().toString(),
@@ -226,6 +248,9 @@ export class MusicService {
       queue.audioPlayer.stop();
       queue.voiceConnection.destroy();
       this.queues.delete(guild.id);
+      
+      // Cancel any empty channel timer
+      this.cancelEmptyChannelTimer(guild.id);
 
       return { success: true, message: '⏹️ Stopped the music and cleared the queue!' };
     } catch (error) {
@@ -376,7 +401,7 @@ export class MusicService {
       channelId: voiceChannel.id,
       guildId: guild.id,
       adapterCreator: guild.voiceAdapterCreator,
-      selfDeaf: false,
+      selfDeaf: true,
       selfMute: false,
     });
 
@@ -420,7 +445,7 @@ export class MusicService {
             channelId: voiceChannel.id,
             guildId: guild.id,
             adapterCreator: guild.voiceAdapterCreator,
-            selfDeaf: false,
+            selfDeaf: true,
             selfMute: false,
           });
         }
@@ -565,7 +590,8 @@ export class MusicService {
         this.logger.info('Video details:', { 
           title: details.title, 
           url: details.url, 
-          id: details.id 
+          id: details.id,
+          durationInSec: details.durationInSec
         });
         return details;
       } else {
@@ -580,10 +606,12 @@ export class MusicService {
             return null;
           }
           
-          this.logger.info('First search result:', { 
+          this.logger.info('Search result basic info:', { 
             title: result.title, 
             url: result.url, 
-            id: result.id 
+            id: result.id,
+            durationInSec: result.durationInSec,
+            durationRaw: result.durationRaw
           });
           
           // Ensure we have a valid URL
@@ -591,7 +619,25 @@ export class MusicService {
             this.logger.error('Search result has no URL:', result);
             return null;
           }
-          return result;
+
+          // Get detailed video info to ensure we have duration
+          try {
+            this.logger.info('Getting detailed video info for better duration data...');
+            const videoInfo = await play.video_info(result.url);
+            const details = videoInfo.video_details;
+            
+            this.logger.info('Detailed video info:', { 
+              title: details.title, 
+              url: details.url, 
+              id: details.id,
+              durationInSec: details.durationInSec
+            });
+            
+            return details;
+          } catch (detailError) {
+            this.logger.warn('Failed to get detailed video info, using search result:', detailError);
+            return result;
+          }
         }
       }
       return null;
@@ -645,10 +691,22 @@ export class MusicService {
       // Create audio resource with better stream handling
       const fileStream = createReadStream(audioFilePath);
       
-      // Add error handling for the file stream
+      // Add error handling for the file stream - gracefully handle interruptions
       fileStream.on('error', (error) => {
-        this.logger.error('File stream error:', error);
-        throw new Error('Failed to read audio file');
+        // Check if this is a premature close (song was skipped/stopped)
+        const errorCode = (error as any).code;
+        if (errorCode === 'ERR_STREAM_PREMATURE_CLOSE' || error.message.includes('Premature close')) {
+          this.logger.info('File stream closed due to skip/stop - this is normal');
+        } else {
+          this.logger.error('File stream error:', error);
+          // Don't throw here - just log and let the audio player handle it
+          // The audioPlayer error handler will take care of advancing to next song
+        }
+      });
+
+      // Add close handler for cleanup
+      fileStream.on('close', () => {
+        this.logger.debug('File stream closed');
       });
 
       const resource = createAudioResource(fileStream, {
@@ -790,6 +848,111 @@ export class MusicService {
   public isPlaying(guildId: string): boolean {
     const queue = this.queues.get(guildId);
     return queue ? queue.playing : false;
+  }
+
+  public async handleVoiceStateUpdate(oldState: any, newState: any): Promise<void> {
+    try {
+      // Check if someone left a voice channel that has a bot connection
+      if (oldState.channelId && !newState.channelId) {
+        const guild = oldState.guild;
+        const queue = this.queues.get(guild.id);
+        
+        if (queue && oldState.channelId === oldState.guild.members.me?.voice.channelId) {
+          this.logger.info(`User ${oldState.member.user.username} left voice channel ${oldState.channel.name}`);
+          this.checkAndHandleEmptyChannel(guild.id, oldState.channel);
+        }
+      }
+      
+      // Check if someone joined a voice channel where the bot is (cancel empty timer)
+      if (!oldState.channelId && newState.channelId) {
+        const guild = newState.guild;
+        const queue = this.queues.get(guild.id);
+        
+        if (queue && newState.channelId === newState.guild.members.me?.voice.channelId) {
+          this.logger.info(`User ${newState.member.user.username} joined voice channel ${newState.channel.name}`);
+          this.cancelEmptyChannelTimer(guild.id);
+        }
+      }
+    } catch (error) {
+      this.logger.error('Error handling voice state update:', error);
+    }
+  }
+
+  private checkAndHandleEmptyChannel(guildId: string, voiceChannel: any): void {
+    // Cancel any existing timer for this guild
+    this.cancelEmptyChannelTimer(guildId);
+    
+    // Count non-bot members in the voice channel
+    const humanMembers = voiceChannel.members.filter((member: any) => !member.user.bot);
+    
+    if (humanMembers.size === 0) {
+      this.logger.info(`Voice channel ${voiceChannel.name} is now empty. Starting 60-second disconnect timer.`);
+      
+      // Set a timer to disconnect after 60 seconds
+      const timer = setTimeout(() => {
+        this.disconnectFromEmptyChannel(guildId, voiceChannel);
+      }, 60000); // 60 seconds
+      
+      this.emptyChannelTimers.set(guildId, timer);
+    }
+  }
+
+  private cancelEmptyChannelTimer(guildId: string): void {
+    const timer = this.emptyChannelTimers.get(guildId);
+    if (timer) {
+      clearTimeout(timer);
+      this.emptyChannelTimers.delete(guildId);
+      this.logger.info(`Cancelled empty channel timer for guild ${guildId}`);
+    }
+  }
+
+  private async disconnectFromEmptyChannel(guildId: string, voiceChannel: any): Promise<void> {
+    try {
+      const queue = this.queues.get(guildId);
+      if (!queue) {
+        this.logger.info(`No queue found for guild ${guildId}, already disconnected`);
+        return;
+      }
+
+      // Double-check that the channel is still empty
+      const humanMembers = voiceChannel.members.filter((member: any) => !member.user.bot);
+      if (humanMembers.size > 0) {
+        this.logger.info(`Voice channel ${voiceChannel.name} is no longer empty, cancelling disconnect`);
+        this.cancelEmptyChannelTimer(guildId);
+        return;
+      }
+
+      this.logger.info(`Disconnecting bot from empty voice channel: ${voiceChannel.name}`);
+      
+      // Send goodbye message
+      try {
+        const embed = new EmbedBuilder()
+          .setColor('#ffa500')
+          .setTitle('👋 Left Voice Channel')
+          .setDescription('I left the voice channel because it was empty for too long.')
+          .addFields({
+            name: 'ℹ️ Info',
+            value: 'Use the `/play` command when you want me to rejoin!',
+            inline: false,
+          })
+          .setTimestamp();
+
+        await queue.textChannel.send({ embeds: [embed] });
+      } catch (messageError) {
+        this.logger.warn('Failed to send goodbye message:', messageError);
+      }
+
+      // Clean up and disconnect
+      queue.songs = [];
+      queue.playing = false;
+      queue.audioPlayer.stop();
+      queue.voiceConnection.destroy();
+      this.queues.delete(guildId);
+      this.cancelEmptyChannelTimer(guildId);
+      
+    } catch (error) {
+      this.logger.error('Error disconnecting from empty channel:', error);
+    }
   }
 
   private async downloadSong(song: Song): Promise<string> {

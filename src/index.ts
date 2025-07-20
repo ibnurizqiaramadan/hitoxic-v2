@@ -4,6 +4,7 @@ import { CommandHandler } from './handlers/CommandHandler';
 import { EventHandler } from './handlers/EventHandler';
 import { Logger } from './utils/Logger';
 import { Config } from './utils/Config';
+import { MusicService } from './services/MusicService';
 
 // Load environment variables
 config();
@@ -105,6 +106,12 @@ client.on('interactionCreate', async (interaction) => {
     logger.error(`Error executing slash command ${interaction.commandName}:`, error);
     await interaction.reply({ content: 'There was an error executing that command!', ephemeral: true });
   }
+});
+
+// Voice state update handling for empty channel detection
+client.on('voiceStateUpdate', async (oldState, newState) => {
+  const musicService = MusicService.getInstance();
+  await musicService.handleVoiceStateUpdate(oldState, newState);
 });
 
 // Error handling
