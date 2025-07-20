@@ -6,31 +6,6 @@ import {
 import { Command } from '../types';
 import { OllamaService } from '../services/OllamaService';
 
-// Helper function to split messages that exceed Discord's limit
-// @ts-ignore
-function splitMessage(text: string, maxLength: number = 1900): string[] {
-  if (text.length <= maxLength) {
-    return [text];
-  }
-  const chunks: string[] = [];
-  let currentChunk = '';
-  const sentences = text.split(/(?<=[.!?])\s+/);
-  for (const sentence of sentences) {
-    if ((currentChunk + sentence).length <= maxLength) {
-      currentChunk += sentence + ' ';
-    } else {
-      if (currentChunk.trim()) {
-        chunks.push(currentChunk.trim());
-      }
-      currentChunk = sentence + ' ';
-    }
-  }
-  if (currentChunk.trim()) {
-    chunks.push(currentChunk.trim());
-  }
-  return chunks;
-}
-
 export const tanya: Command = {
   name: 'tanya',
   description: 'Ask a question to the AI assistant',
@@ -39,85 +14,129 @@ export const tanya: Command = {
   cooldown: 10,
   execute: async (message: Message, args?: string[]) => {
     if (!args || args.length === 0) {
-      await message.reply(
-        '❌ Please provide a question to ask the AI assistant.'
-      );
+      await message.reply('❌ Please provide a question to ask the AI assistant.');
       return;
     }
+
     const question = args.join(' ');
+    
     try {
+      // Send typing indicator
       if ('sendTyping' in message.channel) {
         await message.channel.sendTyping();
       }
-      const ollamaService = new OllamaService();
-      const thinkingMessage = await message.reply('🤔 Thinking...');
-      let fullResponse = '';
-      let lastUpdateTime = Date.now();
-      let currentResponseMessage: Message | null = null;
 
-      for await (const chunk of ollamaService.askStream(question)) {
-        fullResponse += chunk;
-        // Always update every chunk, or at least every 50ms
-        if (Date.now() - lastUpdateTime > 50) {
-          // Check if response is getting too long
-          if (fullResponse.length > 1900) {
-            // Split into chunks and send as new messages
-            const chunks = splitMessage(fullResponse);
-            if (!currentResponseMessage) {
-              // Replace thinking message with first chunk
-              await thinkingMessage.edit(chunks[0] || '');
-              currentResponseMessage = thinkingMessage;
-              // Send remaining chunks as new messages
-              for (let i = 1; i < chunks.length; i++) {
-                await message.reply(chunks[i] || '');
+      const ollamaService = new OllamaService();
+      let currentMessage = await message.reply('🤔 Thinking...');
+      let currentMessageContent = ''; // Track content for current message only
+      let lastUpdateTime = Date.now();
+      const DISCORD_LIMIT = 1950; // Leave some buffer
+      const UPDATE_INTERVAL = 100; // Update every 100ms
+
+              for await (const chunk of ollamaService.askStream(question)) {
+          currentMessageContent += chunk; // Add to current message content
+        
+        // Update message periodically to show progress
+        if (Date.now() - lastUpdateTime >= UPDATE_INTERVAL) {
+          try {
+            // Check if current message content is approaching Discord's character limit
+            if (currentMessageContent.length >= DISCORD_LIMIT) {
+              // Find a good break point (prefer sentence endings)
+              let breakPoint = DISCORD_LIMIT;
+              const sentenceEnd = currentMessageContent.lastIndexOf('.', DISCORD_LIMIT);
+              const questionEnd = currentMessageContent.lastIndexOf('?', DISCORD_LIMIT);
+              const exclamationEnd = currentMessageContent.lastIndexOf('!', DISCORD_LIMIT);
+              
+              breakPoint = Math.max(sentenceEnd, questionEnd, exclamationEnd);
+              if (breakPoint === -1 || breakPoint < DISCORD_LIMIT * 0.7) {
+                // If no good sentence break, find space
+                breakPoint = currentMessageContent.lastIndexOf(' ', DISCORD_LIMIT);
+              }
+              if (breakPoint === -1) {
+                breakPoint = DISCORD_LIMIT;
+              }
+
+              // Edit current message with the content up to break point
+              const currentMessageFinal = currentMessageContent.substring(0, breakPoint).trim();
+              await OllamaService.handleDiscordRateLimit(() => currentMessage.edit(currentMessageFinal));
+
+              // Start new message with remaining content
+              const remainingContent = currentMessageContent.substring(breakPoint).trim();
+              if (remainingContent) {
+                currentMessage = await OllamaService.handleDiscordRateLimit(() => message.reply(remainingContent));
+                currentMessageContent = remainingContent; // Reset to only the remaining content
+              } else {
+                // Start completely fresh message
+                currentMessage = await OllamaService.handleDiscordRateLimit(() => message.reply('_Continuing..._'));
+                currentMessageContent = '';
               }
             } else {
-              // Send all chunks as new messages
-              for (const chunk of chunks) {
-                await message.reply(chunk || '');
-              }
+              // Normal update - edit current message with current content
+              await OllamaService.handleDiscordRateLimit(() => 
+                currentMessage.edit(currentMessageContent || '🤔 Thinking...')
+              );
             }
-            fullResponse = '';
-          } else {
-            // Replace thinking message or edit current response
-            if (!currentResponseMessage) {
-              // Replace thinking message with response
-              await thinkingMessage.edit(fullResponse);
-              currentResponseMessage = thinkingMessage;
-            } else {
-              // Edit the existing response message
-              await currentResponseMessage.edit(fullResponse);
-            }
+            
+            lastUpdateTime = Date.now();
+          } catch (error) {
+            // If edit fails (rate limit, etc.), just continue
+            console.warn('Failed to update message:', error);
           }
-          lastUpdateTime = Date.now();
         }
       }
 
-      // Final update - edit existing or create new
-      if (fullResponse.trim()) {
-        const finalChunks = splitMessage(fullResponse);
-        if (!currentResponseMessage) {
-          // Replace thinking message with first chunk
-          await thinkingMessage.edit(finalChunks[0] || '');
-          // Send remaining chunks as new messages
-          for (let i = 1; i < finalChunks.length; i++) {
-            await message.reply(finalChunks[i] || '');
+      // Final update
+      try {
+        if (currentMessageContent.trim()) {
+          if (currentMessageContent.length >= DISCORD_LIMIT) {
+            // Handle final split if needed
+            let breakPoint = DISCORD_LIMIT;
+            const sentenceEnd = currentMessageContent.lastIndexOf('.', DISCORD_LIMIT);
+            const questionEnd = currentMessageContent.lastIndexOf('?', DISCORD_LIMIT);
+            const exclamationEnd = currentMessageContent.lastIndexOf('!', DISCORD_LIMIT);
+            
+            breakPoint = Math.max(sentenceEnd, questionEnd, exclamationEnd);
+            if (breakPoint === -1 || breakPoint < DISCORD_LIMIT * 0.7) {
+              breakPoint = currentMessageContent.lastIndexOf(' ', DISCORD_LIMIT);
+            }
+            if (breakPoint === -1) {
+              breakPoint = DISCORD_LIMIT;
+            }
+
+            const firstPart = currentMessageContent.substring(0, breakPoint).trim();
+            await OllamaService.handleDiscordRateLimit(() => currentMessage.edit(firstPart));
+
+            const remainingText = currentMessageContent.substring(breakPoint).trim();
+            if (remainingText) {
+              await OllamaService.handleDiscordRateLimit(() => 
+                message.reply(remainingText + '\n\n✅ **Done**')
+              );
+            } else {
+              await OllamaService.handleDiscordRateLimit(() => message.reply('✅ **Done**'));
+            }
+          } else {
+            await OllamaService.handleDiscordRateLimit(() => 
+              currentMessage.edit(currentMessageContent + '\n\n✅ **Done**')
+            );
           }
         } else {
-          // Edit first chunk, send rest as new messages
-          await currentResponseMessage.edit(finalChunks[0] || '');
-          for (let i = 1; i < finalChunks.length; i++) {
-            await message.reply(finalChunks[i] || '');
-          }
+          await OllamaService.handleDiscordRateLimit(() => 
+            currentMessage.edit('❌ No response generated. Please try again.')
+          );
         }
+      } catch (error) {
+        console.error('Failed final update:', error);
+        await OllamaService.handleDiscordRateLimit(() => 
+          message.reply('✅ **Done** (Response completed)')
+        );
       }
+
     } catch (error) {
       console.error('Error asking AI:', error);
-      await message.reply(
-        '❌ Sorry, I encountered an error while processing your question. Please try again later.'
-      );
+      await message.reply('❌ Sorry, I encountered an error while processing your question. Please try again later.');
     }
   },
+
   slashCommand: new SlashCommandBuilder()
     .setName('tanya')
     .setDescription('Ask a question to the AI assistant')
@@ -127,6 +146,7 @@ export const tanya: Command = {
         .setDescription('Your question for the AI')
         .setRequired(true)
     ) as SlashCommandBuilder,
+
   executeSlash: async (interaction: ChatInputCommandInteraction) => {
     const question = interaction.options.getString('question');
     if (!question) {
@@ -136,66 +156,157 @@ export const tanya: Command = {
       });
       return;
     }
+
     try {
       await interaction.deferReply();
-      const ollamaService = new OllamaService();
-      let fullResponse = '';
+      
+            const ollamaService = new OllamaService();
+      let currentMessageContent = ''; // Track content for current message only
       let lastUpdateTime = Date.now();
-      let hasReplied = false;
+      let lastFollowUpMessage: Message | null = null; // Track the last follow-up message for editing
+      const DISCORD_LIMIT = 1950; // Leave some buffer
+      const UPDATE_INTERVAL = 100; // Update every 100ms
 
       for await (const chunk of ollamaService.askStream(question)) {
-        fullResponse += chunk;
-        // Always update every chunk, or at least every 50ms
-        if (Date.now() - lastUpdateTime > 50) {
-          // Check if response is getting too long
-          if (fullResponse.length > 1900) {
-            // Split into chunks and send as new messages
-            const chunks = splitMessage(fullResponse);
-            if (!hasReplied) {
-              // Edit the deferred reply with first chunk
-              await interaction.editReply(chunks[0] || '');
-              hasReplied = true;
-              // Send remaining chunks as follow-up messages
-              for (let i = 1; i < chunks.length; i++) {
-                await interaction.followUp({ content: chunks[i] || '' });
+        currentMessageContent += chunk; // Add to current message content
+        
+        // Update message periodically to show progress
+        if (Date.now() - lastUpdateTime >= UPDATE_INTERVAL) {
+          try {
+            // Check if current message content is approaching Discord's character limit
+            if (currentMessageContent.length >= DISCORD_LIMIT) {
+              // Find a good break point (prefer sentence endings)
+              let breakPoint = DISCORD_LIMIT;
+              const sentenceEnd = currentMessageContent.lastIndexOf('.', DISCORD_LIMIT);
+              const questionEnd = currentMessageContent.lastIndexOf('?', DISCORD_LIMIT);
+              const exclamationEnd = currentMessageContent.lastIndexOf('!', DISCORD_LIMIT);
+              
+              breakPoint = Math.max(sentenceEnd, questionEnd, exclamationEnd);
+              if (breakPoint === -1 || breakPoint < DISCORD_LIMIT * 0.7) {
+                // If no good sentence break, find space
+                breakPoint = currentMessageContent.lastIndexOf(' ', DISCORD_LIMIT);
+              }
+              if (breakPoint === -1) {
+                breakPoint = DISCORD_LIMIT;
+              }
+
+              // Finalize current message with content up to break point
+              const currentMessageFinal = currentMessageContent.substring(0, breakPoint).trim();
+              if (lastFollowUpMessage) {
+                // Edit the last follow-up message
+                const messageToEdit = lastFollowUpMessage;
+                await OllamaService.handleDiscordRateLimit(() => 
+                  messageToEdit.edit(currentMessageFinal)
+                );
+              } else {
+                // Edit the main reply
+                await OllamaService.handleDiscordRateLimit(() => interaction.editReply(currentMessageFinal));
+              }
+
+              // Start new follow-up message with remaining content
+              const remainingContent = currentMessageContent.substring(breakPoint).trim();
+              if (remainingContent) {
+                lastFollowUpMessage = await OllamaService.handleDiscordRateLimit(() => 
+                  interaction.followUp({ content: remainingContent })
+                );
+                currentMessageContent = remainingContent; // Reset to only the remaining content
+              } else {
+                // Start completely fresh follow-up
+                lastFollowUpMessage = await OllamaService.handleDiscordRateLimit(() => 
+                  interaction.followUp({ content: '_Continuing..._' })
+                );
+                currentMessageContent = '';
               }
             } else {
-              // Send all chunks as follow-up messages
-              for (const chunk of chunks) {
-                await interaction.followUp({ content: chunk || '' });
+              // Normal update - edit current active message with current content
+              if (lastFollowUpMessage) {
+                // Edit the last follow-up message
+                const messageToEdit = lastFollowUpMessage;
+                await OllamaService.handleDiscordRateLimit(() => 
+                  messageToEdit.edit(currentMessageContent || '_Continuing..._')
+                );
+              } else {
+                // Edit the main reply
+                await OllamaService.handleDiscordRateLimit(() => 
+                  interaction.editReply(currentMessageContent || '🤔 Thinking...')
+                );
               }
             }
-            fullResponse = '';
-          } else {
-            // Edit the deferred reply
-            await interaction.editReply(fullResponse);
+            
+            lastUpdateTime = Date.now();
+          } catch (error) {
+            // If edit fails (rate limit, etc.), just continue
+            console.warn('Failed to update interaction:', error);
           }
-          lastUpdateTime = Date.now();
         }
       }
 
-      // Final update - edit existing or create new
-      if (fullResponse.trim()) {
-        const finalChunks = splitMessage(fullResponse);
-        if (!hasReplied) {
-          await interaction.editReply(finalChunks[0] || '');
-          // Send remaining chunks as follow-up messages
-          for (let i = 1; i < finalChunks.length; i++) {
-            await interaction.followUp({ content: finalChunks[i] || '' });
+            // Final update
+      try {
+        if (currentMessageContent.trim()) {
+          if (currentMessageContent.length >= DISCORD_LIMIT) {
+            // Handle final split if needed
+            let breakPoint = DISCORD_LIMIT;
+            const sentenceEnd = currentMessageContent.lastIndexOf('.', DISCORD_LIMIT);
+            const questionEnd = currentMessageContent.lastIndexOf('?', DISCORD_LIMIT);
+            const exclamationEnd = currentMessageContent.lastIndexOf('!', DISCORD_LIMIT);
+            
+            breakPoint = Math.max(sentenceEnd, questionEnd, exclamationEnd);
+            if (breakPoint === -1 || breakPoint < DISCORD_LIMIT * 0.7) {
+              breakPoint = currentMessageContent.lastIndexOf(' ', DISCORD_LIMIT);
+            }
+            if (breakPoint === -1) {
+              breakPoint = DISCORD_LIMIT;
+            }
+
+            const firstPart = currentMessageContent.substring(0, breakPoint).trim();
+            if (lastFollowUpMessage) {
+              const messageToEdit = lastFollowUpMessage;
+              await OllamaService.handleDiscordRateLimit(() => 
+                messageToEdit.edit(firstPart)
+              );
+            } else {
+              await OllamaService.handleDiscordRateLimit(() => interaction.editReply(firstPart));
+            }
+
+            const remainingText = currentMessageContent.substring(breakPoint).trim();
+            if (remainingText) {
+              await OllamaService.handleDiscordRateLimit(() => 
+                interaction.followUp({ content: remainingText + '\n\n✅ **Done**' })
+              );
+            } else {
+              await OllamaService.handleDiscordRateLimit(() => 
+                interaction.followUp({ content: '✅ **Done**' })
+              );
+            }
+          } else {
+            if (lastFollowUpMessage) {
+              const messageToEdit = lastFollowUpMessage;
+              await OllamaService.handleDiscordRateLimit(() => 
+                messageToEdit.edit(currentMessageContent + '\n\n✅ **Done**')
+              );
+            } else {
+              await OllamaService.handleDiscordRateLimit(() => 
+                interaction.editReply(currentMessageContent + '\n\n✅ **Done**')
+              );
+            }
           }
-        } else {
-          // Edit first chunk, send rest as follow-up messages
-          await interaction.editReply(finalChunks[0] || '');
-          for (let i = 1; i < finalChunks.length; i++) {
-            await interaction.followUp({ content: finalChunks[i] || '' });
-          }
-        }
+      } else {
+        await OllamaService.handleDiscordRateLimit(() => 
+          interaction.editReply('❌ No response generated. Please try again.')
+        );
       }
     } catch (error) {
-      console.error('Error asking AI:', error);
-      await interaction.editReply(
-        '❌ Sorry, I encountered an error while processing your question. Please try again later.'
+      console.error('Failed final update:', error);
+      await OllamaService.handleDiscordRateLimit(() => 
+        interaction.followUp({ content: '✅ **Done** (Response completed)' })
       );
+    }
+
+    } catch (error) {
+      console.error('Error asking AI:', error);
+      await interaction.editReply('❌ Sorry, I encountered an error while processing your question. Please try again later.');
     }
   },
 };
+

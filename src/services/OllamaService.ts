@@ -130,7 +130,7 @@ export class OllamaService {
     try {
       const requestBody: OllamaRequest = {
         model: this.model,
-        prompt: `You are a helpful Discord bot assistant. Keep all responses under 2000 characters to fit Discord message limits. Be concise but helpful.\n\n${prompt}`,
+        prompt: `You are a helpful Discord bot assistant.\n\n${prompt}`,
         stream: true,
       };
 
@@ -205,7 +205,18 @@ export class OllamaService {
     // Check cache first
     const cachedResponse = this.getFromCache(prompt);
     if (cachedResponse) {
-      yield cachedResponse;
+      // Simulate streaming for cached responses to maintain consistent UX
+      const words = cachedResponse.split(' ');
+      for (let i = 0; i < words.length; i++) {
+        const chunk = words.slice(0, i + 1).join(' ');
+        if (i < words.length - 1) {
+          yield chunk;
+          // Small delay to simulate natural typing
+          await new Promise(resolve => setTimeout(resolve, 50));
+        } else {
+          yield chunk; // Final chunk without delay
+        }
+      }
       return;
     }
 
@@ -216,7 +227,14 @@ export class OllamaService {
       }
     );
 
-    yield* generator;
+    let fullResponse = '';
+    for await (const chunk of generator) {
+      fullResponse += chunk;
+      yield chunk;
+    }
+
+    // Cache the complete response
+    this.setCache(prompt, fullResponse);
   }
 
   async ask(prompt: string): Promise<string> {
@@ -248,5 +266,35 @@ export class OllamaService {
       size: this.cache.size,
       hitRate: 0, // Could be implemented with hit/miss counters
     };
+  }
+
+  // Helper method for handling Discord API rate limits
+  static async handleDiscordRateLimit<T>(
+    operation: () => Promise<T>,
+    maxRetries: number = 3,
+    baseDelay: number = 1000
+  ): Promise<T> {
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      try {
+        return await operation();
+      } catch (error: unknown) {
+        const errorObj = error as { code?: number; status?: number; message?: string };
+        const isRateLimit = errorObj?.code === 50013 || 
+                          errorObj?.status === 429 || 
+                          errorObj?.message?.includes('rate limit') ||
+                          errorObj?.message?.includes('Too Many Requests');
+        
+        if (isRateLimit && attempt < maxRetries - 1) {
+          const delay = baseDelay * Math.pow(2, attempt); // Exponential backoff
+          console.warn(`Discord rate limit hit, retrying in ${delay}ms... (attempt ${attempt + 1}/${maxRetries})`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+          continue;
+        }
+        
+        throw error;
+      }
+    }
+    
+    throw new Error('Max retries exceeded for Discord API operation');
   }
 }
