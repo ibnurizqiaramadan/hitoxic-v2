@@ -1,4 +1,4 @@
-import { Message, SlashCommandBuilder, ChatInputCommandInteraction } from 'discord.js';
+import { Message, SlashCommandBuilder, ChatInputCommandInteraction, TextChannel, GuildMember } from 'discord.js';
 import { Command } from '../types';
 import { MusicService } from '../services/MusicService';
 
@@ -14,14 +14,24 @@ export const play: Command = {
       return;
     }
 
+    if (!message.guild) {
+      await message.reply('❌ This command can only be used in a server!');
+      return;
+    }
+
+    if (!message.member) {
+      await message.reply('❌ Could not find your member information!');
+      return;
+    }
+
     const query = args.join(' ');
     const musicService = MusicService.getInstance();
     
     const result = await musicService.play(
-      message.guild!,
-      message.member!,
+      message.guild,
+      message.member,
       query,
-      message.channel as any
+      message.channel as TextChannel
     );
 
     if (result.success) {
@@ -48,14 +58,24 @@ export const play: Command = {
     
     // Defer reply to prevent timeout
     await interaction.deferReply();
+
+    if (!interaction.guild) {
+      await interaction.editReply('❌ This command can only be used in a server!');
+      return;
+    }
+
+    if (!interaction.member) {
+      await interaction.editReply('❌ Could not find your member information!');
+      return;
+    }
     
     const musicService = MusicService.getInstance();
     
     const result = await musicService.play(
-      interaction.guild!,
-      interaction.member as any,
+      interaction.guild,
+      interaction.member as GuildMember,
       query,
-      interaction.channel as any
+      interaction.channel as TextChannel
     );
 
     if (result.success) {

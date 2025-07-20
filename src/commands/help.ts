@@ -35,7 +35,7 @@ export const help: Command = {
       await message.reply({ embeds: [embed] });
     } else {
       // Show specific command help
-      const commandName = args![0]?.toLowerCase() || '';
+      const commandName = args[0]?.toLowerCase() || '';
 
       if (commandName === 'ping') {
         const embed = new EmbedBuilder()

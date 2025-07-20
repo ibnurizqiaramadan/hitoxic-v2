@@ -9,12 +9,15 @@ import {
   NoSubscriberBehavior,
   entersState,
   getVoiceConnection,
+  VoiceConnection,
 } from '@discordjs/voice';
 import {
   Guild,
   GuildMember,
   TextChannel,
   EmbedBuilder,
+  VoiceBasedChannel,
+  VoiceState,
 } from 'discord.js';
 import play from 'play-dl';
 import { Logger } from '../utils/Logger';
@@ -27,7 +30,7 @@ export interface Song {
   title: string;
   url: string;
   duration: number;
-  thumbnail?: string;
+  thumbnail?: string | undefined;
   requestedBy: string;
   id: string;
 }
@@ -38,8 +41,22 @@ export interface MusicQueue {
   playing: boolean;
   loop: boolean;
   textChannel: TextChannel;
-  voiceConnection: any;
+  voiceConnection: VoiceConnection;
   audioPlayer: AudioPlayer;
+}
+
+interface NodeError extends Error {
+  code?: string;
+}
+
+interface SongInfo {
+  title?: string;
+  url?: string;
+  id?: string;
+  duration?: number;
+  durationInSec?: number;
+  durationRaw?: string;
+  thumbnails?: Array<{ url: string }>;
 }
 
 export class MusicService {
@@ -77,13 +94,14 @@ export class MusicService {
       this.logger.info(`User: ${member.user.username} (${member.id})`);
       this.logger.info(`Voice Channel: ${voiceChannel.name} (${voiceChannel.id})`);
       this.logger.info(`Bot User: ${guild.members.me?.user.username} (${guild.members.me?.id})`);
-      this.logger.info(`Bot Permissions: ${voiceChannel.permissionsFor(guild.members.me!).toArray().join(', ')}`);
       
       // Check if bot is ready
       if (!guild.members.me) {
         this.logger.error('Bot is not a member of this guild');
         return { success: false, message: '❌ Bot is not ready yet. Please try again in a moment!' };
       }
+
+      this.logger.info(`Bot Permissions: ${voiceChannel.permissionsFor(guild.members.me).toArray().join(', ')}`);
       
       // Check if bot is connected to Discord
       if (!guild.client.isReady()) {
@@ -117,12 +135,12 @@ export class MusicService {
       }
 
       // Check if bot has permission to connect to voice channel
-      if (!voiceChannel.permissionsFor(guild.members.me!).has('Connect')) {
+      if (!voiceChannel.permissionsFor(guild.members.me).has('Connect')) {
         return { success: false, message: '❌ I need permission to connect to this voice channel!' };
       }
 
       // Check if bot has permission to speak in voice channel
-      if (!voiceChannel.permissionsFor(guild.members.me!).has('Speak')) {
+      if (!voiceChannel.permissionsFor(guild.members.me).has('Speak')) {
         return { success: false, message: '❌ I need permission to speak in this voice channel!' };
       }
 
@@ -174,9 +192,9 @@ export class MusicService {
       } else if (songInfo.durationRaw) {
         // Parse duration from format like "4:23" to seconds
         const timeMatch = songInfo.durationRaw.match(/(\d+):(\d+)/);
-        if (timeMatch) {
-          const minutes = parseInt(timeMatch[1]);
-          const seconds = parseInt(timeMatch[2]);
+        if (timeMatch && timeMatch[1] && timeMatch[2]) {
+          const minutes = parseInt(timeMatch[1], 10);
+          const seconds = parseInt(timeMatch[2], 10);
           duration = minutes * 60 + seconds;
         }
       } else if (songInfo.duration) {
@@ -187,7 +205,7 @@ export class MusicService {
 
       const song: Song = {
         title: songInfo.title || 'Unknown Title',
-        url: songInfo.url,
+        url: songInfo.url || '',
         duration: duration,
         thumbnail: songInfo.thumbnails?.[0]?.url,
         requestedBy: member.user.username,
@@ -393,7 +411,7 @@ export class MusicService {
 
   private async createQueue(
     guild: Guild,
-    voiceChannel: any,
+    voiceChannel: VoiceBasedChannel,
     textChannel: TextChannel
   ): Promise<MusicQueue> {
     const audioPlayer = createAudioPlayer({
@@ -551,9 +569,9 @@ export class MusicService {
 
   private async createQueueWithExistingConnection(
     guild: Guild,
-    voiceChannel: any,
+    voiceChannel: VoiceBasedChannel,
     textChannel: TextChannel,
-    existingConnection: any
+    existingConnection: VoiceConnection
   ): Promise<MusicQueue> {
     const audioPlayer = createAudioPlayer({
       behaviors: {
@@ -603,7 +621,7 @@ export class MusicService {
     return queue;
   }
 
-  private async searchSong(query: string): Promise<any> {
+  private async searchSong(query: string): Promise<SongInfo | null> {
     try {
       this.logger.info('Searching for song:', query);
       
@@ -716,10 +734,9 @@ export class MusicService {
       const fileStream = createReadStream(audioFilePath);
       
       // Add error handling for the file stream - gracefully handle interruptions
-      fileStream.on('error', (error) => {
+      fileStream.on('error', (error: NodeError) => {
         // Check if this is a premature close (song was skipped/stopped)
-        const errorCode = (error as any).code;
-        if (errorCode === 'ERR_STREAM_PREMATURE_CLOSE' || error.message.includes('Premature close')) {
+        if (error.code === 'ERR_STREAM_PREMATURE_CLOSE' || error.message.includes('Premature close')) {
           this.logger.info('File stream closed due to skip/stop - this is normal');
         } else {
           this.logger.error('File stream error:', error);
@@ -785,7 +802,11 @@ export class MusicService {
       queue.audioPlayer.play(resource);
       
       // Make sure voice connection is subscribed to audio player
-      if (!queue.voiceConnection.state.subscription) {
+      const currentSubscription = queue.voiceConnection.state.status === VoiceConnectionStatus.Ready 
+        ? queue.voiceConnection.state.subscription 
+        : null;
+      
+      if (!currentSubscription) {
         this.logger.info('Subscribing voice connection to audio player');
         queue.voiceConnection.subscribe(queue.audioPlayer);
       } else {
@@ -882,10 +903,10 @@ export class MusicService {
     return queue ? queue.playing : false;
   }
 
-  public async handleVoiceStateUpdate(oldState: any, newState: any): Promise<void> {
+  public async handleVoiceStateUpdate(oldState: VoiceState, newState: VoiceState): Promise<void> {
     try {
       // Check if someone left a voice channel that has a bot connection
-      if (oldState.channelId && !newState.channelId) {
+      if (oldState.channelId && !newState.channelId && oldState.member && oldState.channel) {
         const guild = oldState.guild;
         const queue = this.queues.get(guild.id);
         
@@ -896,7 +917,7 @@ export class MusicService {
       }
       
       // Check if someone joined a voice channel where the bot is (cancel empty timer)
-      if (!oldState.channelId && newState.channelId) {
+      if (!oldState.channelId && newState.channelId && newState.member && newState.channel) {
         const guild = newState.guild;
         const queue = this.queues.get(guild.id);
         
@@ -910,12 +931,12 @@ export class MusicService {
     }
   }
 
-  private checkAndHandleEmptyChannel(guildId: string, voiceChannel: any): void {
+  private checkAndHandleEmptyChannel(guildId: string, voiceChannel: VoiceBasedChannel): void {
     // Cancel any existing timer for this guild
     this.cancelEmptyChannelTimer(guildId);
     
     // Count non-bot members in the voice channel
-    const humanMembers = voiceChannel.members.filter((member: any) => !member.user.bot);
+    const humanMembers = voiceChannel.members.filter((member: GuildMember) => !member.user.bot);
     
     if (humanMembers.size === 0) {
       this.logger.info(`Voice channel ${voiceChannel.name} is now empty. Starting 60-second disconnect timer.`);
@@ -938,7 +959,7 @@ export class MusicService {
     }
   }
 
-  private async disconnectFromEmptyChannel(guildId: string, voiceChannel: any): Promise<void> {
+  private async disconnectFromEmptyChannel(guildId: string, voiceChannel: VoiceBasedChannel): Promise<void> {
     try {
       const queue = this.queues.get(guildId);
       if (!queue) {
@@ -947,7 +968,7 @@ export class MusicService {
       }
 
       // Double-check that the channel is still empty
-      const humanMembers = voiceChannel.members.filter((member: any) => !member.user.bot);
+      const humanMembers = voiceChannel.members.filter((member: GuildMember) => !member.user.bot);
       if (humanMembers.size > 0) {
         this.logger.info(`Voice channel ${voiceChannel.name} is no longer empty, cancelling disconnect`);
         this.cancelEmptyChannelTimer(guildId);

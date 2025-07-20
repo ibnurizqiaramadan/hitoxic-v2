@@ -9,8 +9,13 @@ export const queue: Command = {
   aliases: ['q', 'list'],
   cooldown: 5,
   execute: async (message: Message) => {
+    if (!message.guild) {
+      await message.reply('❌ This command can only be used in a server!');
+      return;
+    }
+
     const musicService = MusicService.getInstance();
-    const result = await musicService.queue(message.guild!);
+    const result = await musicService.queue(message.guild);
     
     if (result.success) {
       if (typeof result.message === 'string') {
@@ -26,8 +31,13 @@ export const queue: Command = {
     .setName('queue')
     .setDescription('Show the music queue') as SlashCommandBuilder,
   executeSlash: async (interaction: ChatInputCommandInteraction) => {
+    if (!interaction.guild) {
+      await interaction.reply({ content: '❌ This command can only be used in a server!', ephemeral: true });
+      return;
+    }
+
     const musicService = MusicService.getInstance();
-    const result = await musicService.queue(interaction.guild!);
+    const result = await musicService.queue(interaction.guild);
     
     if (result.success) {
       if (typeof result.message === 'string') {

@@ -4,7 +4,8 @@ import { Logger } from '../utils/Logger';
 
 export const interactionCreate: Event = {
   name: 'interactionCreate',
-  execute: async (_client: Client, interaction: Interaction) => {
+  execute: async (...args: unknown[]) => {
+    const [, interaction] = args as [Client, Interaction];
     const logger = new Logger();
 
     if (!interaction.isChatInputCommand()) {

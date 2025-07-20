@@ -1,5 +1,4 @@
 import {
-  Client,
   Message,
   ChatInputCommandInteraction,
   SlashCommandBuilder,
@@ -20,7 +19,7 @@ export interface Command {
 export interface Event {
   name: string;
   once?: boolean;
-  execute: (client: Client, ...args: any[]) => Promise<void>;
+  execute: (...args: unknown[]) => Promise<void>;
 }
 
 export interface BotConfig {

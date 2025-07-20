@@ -20,8 +20,13 @@ export const volume: Command = {
       return;
     }
 
+    if (!message.guild) {
+      await message.reply('❌ This command can only be used in a server!');
+      return;
+    }
+
     const musicService = MusicService.getInstance();
-    const result = await musicService.volume(message.guild!, volume);
+    const result = await musicService.volume(message.guild, volume);
     
     await message.reply(result.message);
   },
@@ -38,8 +43,14 @@ export const volume: Command = {
     ) as SlashCommandBuilder,
   executeSlash: async (interaction: ChatInputCommandInteraction) => {
     const volume = interaction.options.getInteger('level', true);
+    
+    if (!interaction.guild) {
+      await interaction.reply({ content: '❌ This command can only be used in a server!', ephemeral: true });
+      return;
+    }
+
     const musicService = MusicService.getInstance();
-    const result = await musicService.volume(interaction.guild!, volume);
+    const result = await musicService.volume(interaction.guild, volume);
     
     await interaction.reply({ content: result.message, ephemeral: true });
   },
