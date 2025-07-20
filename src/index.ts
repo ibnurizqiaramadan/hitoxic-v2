@@ -48,7 +48,7 @@ async function registerSlashCommands(): Promise<void> {
     // Get slash commands from commands
     const slashCommands = commands
       .filter(cmd => cmd.slashCommand)
-      .map(cmd => cmd.slashCommand!.toJSON());
+      .map(cmd => cmd.slashCommand?.toJSON());
     
     if (slashCommands.length === 0) {
       logger.info('No slash commands to register');
