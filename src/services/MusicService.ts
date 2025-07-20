@@ -224,10 +224,34 @@ export class MusicService {
   public async skip(guild: Guild): Promise<{ success: boolean; message: string }> {
     try {
       const queue = this.queues.get(guild.id);
-      if (!queue || !queue.playing) {
+      
+      // Debug logging for skip command
+      this.logger.info(`Skip command - Queue exists: ${!!queue}`);
+      if (queue) {
+        this.logger.info(`Skip command - Queue playing: ${queue.playing}`);
+        this.logger.info(`Skip command - Queue songs count: ${queue.songs.length}`);
+        this.logger.info(`Skip command - Audio player status: ${queue.audioPlayer.state.status}`);
+      }
+      
+      if (!queue) {
+        return { success: false, message: '❌ Nothing is currently playing!' };
+      }
+      
+      // Check if queue has songs and audio player is actually playing
+      if (queue.songs.length === 0) {
+        queue.playing = false; // Update state
+        return { success: false, message: '❌ Nothing is currently playing!' };
+      }
+      
+      // If audio player is not playing but we have songs, something is wrong
+      if (queue.audioPlayer.state.status !== AudioPlayerStatus.Playing && 
+          queue.audioPlayer.state.status !== AudioPlayerStatus.Buffering) {
+        this.logger.warn(`Audio player status is ${queue.audioPlayer.state.status} but queue has ${queue.songs.length} songs`);
+        queue.playing = false; // Update state
         return { success: false, message: '❌ Nothing is currently playing!' };
       }
 
+      this.logger.info(`Skipping current song: ${queue.songs[0]?.title}`);
       queue.audioPlayer.stop();
       return { success: true, message: '⏭️ Skipped the current song!' };
     } catch (error) {
@@ -750,6 +774,14 @@ export class MusicService {
         await new Promise(resolve => setTimeout(resolve, 500));
       }
 
+      // Remove all existing listeners to prevent duplicates
+      queue.audioPlayer.removeAllListeners(AudioPlayerStatus.Playing);
+      queue.audioPlayer.removeAllListeners(AudioPlayerStatus.Buffering);
+      queue.audioPlayer.removeAllListeners(AudioPlayerStatus.AutoPaused);
+      queue.audioPlayer.removeAllListeners(AudioPlayerStatus.Paused);
+      queue.audioPlayer.removeAllListeners(AudioPlayerStatus.Idle);
+      queue.audioPlayer.removeAllListeners('error');
+
       queue.audioPlayer.play(resource);
       
       // Make sure voice connection is subscribed to audio player
@@ -760,7 +792,7 @@ export class MusicService {
         this.logger.info('Voice connection already subscribed to audio player');
       }
 
-      // Set up event listeners
+      // Set up event listeners (after removing old ones to prevent duplicates)
       queue.audioPlayer.on(AudioPlayerStatus.Playing, () => {
         this.logger.info(`Now playing: ${song.title}`);
       });
